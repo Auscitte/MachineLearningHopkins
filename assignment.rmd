@@ -1,0 +1,224 @@
+---
+title: "Quality Assessment For Weight Lifting Exercises"
+output: html_document
+
+---
+
+## Introduction
+
+In the course of human activity recognition study a group of researchers from Lancaster University in collaboration with Pontifical Catholic University of Rio de Janeiro [1] collected sensor measurements taken while participants were performing biceps curls. Sensors used during the experiment included accelerator, gyroscope, magnetometer; in addition to raw readings roll, pitch, and yaw were calculated and recorded. Whether the exercise is performed correctly or not was determined visually and the observations were divided into 5 classes ("A", "B", "C", "D", and "E") according to the type of error participant made (e.g., wrong posture, insufficient range of motion) with "A" denoting the correct form. The data constitute input data set for our project. The present work aims to construct a model allowing to predict how well the exercise was performed based on the sensor measurements using out-of-the-box machine learning algorithm of our choosing. 
+
+```{r, cache = TRUE, echo = FALSE, warning=FALSE, message = FALSE}
+library(caret)
+library(gridExtra)
+LoadtData <- function(path, tst) {
+  
+  data <- read.csv(path, stringsAsFactors = FALSE)
+
+  data$max_yaw_dumbbell <- as.integer(data$max_yaw_dumbbell)
+  data$min_yaw_dumbbell <- as.integer(data$min_yaw_dumbbell)
+	data$max_yaw_forearm <- as.integer(data$max_yaw_forearm)
+	data$max_yaw_belt <- as.integer(data$max_yaw_belt)
+	data$min_yaw_belt <- as.integer(data$min_yaw_belt)
+	data$kurtosis_roll_belt <- as.integer(data$kurtosis_roll_belt)
+	data$kurtosis_picth_belt <- as.integer(data$kurtosis_picth_belt) 
+	data$kurtosis_yaw_belt <- as.integer(data$kurtosis_yaw_belt)
+	data$skewness_roll_belt <- as.integer(data$skewness_roll_belt)
+	data$skewness_roll_belt.1 <- as.integer(data$skewness_roll_belt.1)
+	data$skewness_yaw_belt <- as.integer(data$skewness_yaw_belt)
+	data$amplitude_yaw_belt <- as.integer(data$amplitude_yaw_belt)
+	data$kurtosis_roll_arm <- as.integer(data$kurtosis_roll_arm)
+	data$kurtosis_picth_arm <- as.integer(data$kurtosis_picth_arm)
+	data$kurtosis_yaw_arm <- as.integer(data$kurtosis_yaw_arm)
+	data$skewness_roll_arm  <- as.integer(data$skewness_roll_arm)
+	data$skewness_pitch_arm  <- as.integer(data$skewness_pitch_arm)
+	data$skewness_yaw_arm  <- as.integer(data$skewness_yaw_arm)
+	data$kurtosis_roll_dumbbell <- as.integer(data$kurtosis_roll_dumbbell)
+	data$kurtosis_picth_dumbbell <- as.integer(data$kurtosis_picth_dumbbell)
+	data$kurtosis_yaw_dumbbell  <- as.integer(data$kurtosis_yaw_dumbbell)
+	data$skewness_roll_dumbbell  <- as.integer(data$skewness_roll_dumbbell)
+	data$skewness_pitch_dumbbell  <- as.integer(data$skewness_pitch_dumbbell)
+	data$skewness_yaw_dumbbell  <- as.integer(data$skewness_yaw_dumbbell)
+	data$amplitude_yaw_dumbbell  <- as.integer(data$amplitude_yaw_dumbbell)
+	data$kurtosis_roll_forearm  <- as.integer(data$kurtosis_roll_forearm)
+	data$kurtosis_picth_forearm  <- as.integer(data$kurtosis_picth_forearm)
+	data$kurtosis_yaw_forearm  <- as.integer(data$kurtosis_yaw_forearm)
+	data$skewness_roll_forearm  <- as.integer(data$skewness_roll_forearm)
+	data$skewness_pitch_forearm  <- as.integer(data$skewness_pitch_forearm)
+	data$skewness_yaw_forearm  <- as.integer(data$skewness_yaw_forearm)
+	data$min_yaw_forearm  <- as.integer(data$min_yaw_forearm)
+	data$amplitude_yaw_forearm  <- as.integer(data$amplitude_yaw_forearm)
+	data$max_yaw_forearm <- as.integer(data$max_yaw_forearm)
+
+	if (!tst)
+		data$classe <- as.factor(data$classe)
+
+	data$user_name <- as.factor(data$user_name)
+	data$new_window <- as.factor(data$new_window)
+	data$num_window <- as.factor(data$num_window)
+
+	data$cvtd_timestamp <- strptime(data$cvtd_timestamp, "%d/%m/%Y %H:%M")
+
+  data
+}
+
+data <- LoadtData("pml-training.csv", FALSE)
+```
+
+## Cleaning Data
+
+We begin by loading data set and converting all the variables containing sensor measurements and their derivatives to the numeric format (the code doing so is omitted). In order to ensure the correct operation of learning algorithm it is necessary to remove records with missing data from the data set. We remove the variable completely if the number of NA values exceeds 40%. Since in our case variable values either are fully specified or contain more than 90% of NANs, no further processing is necessary.
+
+```{r, cache=TRUE}
+RemoveNAs <- function(data) {
+  
+  vc <- integer(0) #indecies of variables that are to be kept
+  nanprc <- numeric(0)
+  for (c in seq(dim(data)[2]))
+  {
+    col <- data[, c]
+    
+    lenNA <- length(col[is.na(col)]) 
+	
+
+    if ((lenNA * 100.0 / dim(data)[1]) < 40.0)
+			  vc <- c(vc, c)
+    
+    nanprc <- c(nanprc, (lenNA * 100.0 / dim(data)[1])) #percentage of NAs 
+  }
+
+  data <- data[, vc] #remove variables
+  
+  #diagnostic output
+  if (length(nanprc[nanprc > 0 & nanprc < 40.0]) == 0)
+      print("All the NAs have been removed")
+  
+  data
+}
+```
+
+It should be noted, that values for some variables seem to be recorded only at the start of a sliding window, i.e. when variable *new_window* is equal to "yes". Below is the list of such variables.  
+
+```{r set options, cache=TRUE, echo = FALSE}
+  options(width = 120)
+  nw <- as.character(data$new_window) == "yes"
+  vrs <- character(0)
+  for (c in seq(dim(data)[2]))
+  {
+     col <- data[, c]
+     nas <- col[!nw]
+     if (!(NA %in% col[nw]) && length(nas[is.na(nas)] == length(nas)))
+       vrs <- c(vrs, names(data)[c])
+  }
+  print(vrs)
+```
+
+Thus, we could potentially populate variable vectors by simply copying the values. However, as as we will demonstrate in the following it is possible to successfully predict outcome without introducing these variables into the model, therefore, for the sake of simplicity we adhere to the original idea and *RemoveNAs()* function is used to clean the data.
+
+
+```{r, cache=TRUE, echo=FALSE }
+data <- RemoveNAs(data)
+```
+
+In order to identify outliers a series of boxplot plots which we inspected visually was used. See an example of such plot below. Plots for the entire data can be obtained by downloading [ExploratoryOutliers.pdf](./ExploratoryOutliers.pdf) for original data and [ExploratoryClean.pdf](./ExploratoryClean.pdf) for data with "clear" outliers removed.
+
+```{r, cache=TRUE, echo = FALSE, out.width = '1000px'}
+  p <- qplot(classe, gyros_dumbbell_x, data = data, fill = classe, 
+             geom = "boxplot", ylab = "gyros_dumbbell_x")
+  q <- qplot(classe, gyros_dumbbell_x, data = data, fill = classe, 
+             geom = c("boxplot", "jitter"), color = data$user_name, ylab = "gyros_dumbbell_x")
+  
+  grid.arrange(p, q, ncol = 2)
+
+  goodd <- data$gyros_dumbbell_x > -200 & data$magnet_dumbbell_y > -3000
+  data <- data[goodd, ]
+
+```
+
+
+## Preprocessing And Exploratory Data Analysis 
+
+Exploratory data analysis did not contribute significantly to our understanding of dependencies and interactions between variables. A series of boxplots, for example, demonstrate strong dependency of measurements on the *user_name* variable rather than *classe* which we would like to avoid since our goal is to give accurate predictions irrespective of the sportsman physical characteristics. 
+
+In addition, We checked if the data contained variables with near-zero variance which were unlikely to serve as predictors.   
+
+```{r, cache = TRUE}
+nz <- nearZeroVar(data[, 8:dim(data)[2]], saveMetrics = TRUE)
+if (!(TRUE %in% nz$nzv))
+  print("No variables with near-zero variance found")
+  
+```
+
+Taking into account results of exploratory analysis, we decided to dispose of irrelevant data, that is, data not derived from sensors measurements and build the model based on the rest of variables.
+
+```{r, cache = TRUE}
+data <- data[, -c(1, 2, 3, 4, 5, 6, 7)]
+```
+
+## Model Fitting
+
+Due to the fact that computational resources available to us were limited the "random forest" learning algorithm provided a suitable compromise between accuracy (the next best algorithm gave us out-of-sample error 0.68 only) and running time. Parameters for the learning algorithm and resampling procedure were set based on the number of experiments.
+
+We start by partitioning the data into training and testing sets. 
+
+```{r, cache = TRUE}
+inTrain <- createDataPartition(y = data$classe, p = 0.60, list = FALSE)
+training <- data[inTrain, ]
+testing <- data[-inTrain, ]
+```
+
+Next, the resampling method is chosen. In our case it is cross-validation with the number of folds equal to 3 which constitutes a sufficient tradeoff between speed and accuracy. 
+
+```{r, cache = TRUE}
+ctrl <- trainControl(method = "cv", number = 3, repeats = 1, verboseIter = TRUE)
+```
+
+The typical values for number of trees to grow are 10, 30, or 30; we select the medium one. Random forest does not require data prepossessing such as normalization of principal component analysis, therefore, we do not initialize *preProcess* parameter. Finally, *tuneLength* allows to specify how many different sets of parameters will be generated by caret. We set this value equal to the number of folds cross-validation uses.
+
+
+```{r, cache = TRUE, warning=FALSE, message=FALSE}
+print(
+  system.time(
+    modFit <- train(classe ~ ., method = "rf", ntree = 30, trControl = ctrl, 
+                    data = training, tuneLength = 3)))
+```
+
+Now we estimate the resulting model. 
+
+```{r, cache = TRUE, warning=FALSE, message=FALSE}
+prtrain <- predict(modFit, newdata = training)
+cmtr <- confusionMatrix(prtrain, training$classe)
+print(paste("In-sample error is equal to ", cmtr$overall[1]))
+```
+
+Redistribution error is quite high, thus, low out-of-sample error will be an indicator of overfitting.   
+
+```{r, cache = TRUE, warning=FALSE, message=FALSE}
+prtest <- predict(modFit, newdata = testing)
+cmtst <- confusionMatrix(prtest, testing$classe)
+print(paste("Out-of-sample error is equal to ", cmtst$overall[1]))
+```
+
+Out-of-sample error provides an estimate of model accuracy. Now we will run prediction algorithm on the validation data.
+
+```{r, cache = TRUE, echo = FALSE, warning=FALSE}
+testdata <- LoadtData("pml-testing.csv", TRUE)
+prval <- predict(modFit, newdata = testdata)
+#B A B A A E D B A A B C B A E E A B B B
+cmtval <- confusionMatrix(prval, 
+                         factor(c(2, 1, 2, 1, 1, 5, 4, 2, 1, 1, 2, 3, 2, 1, 5, 5, 1, 2, 2, 2), 
+                                labels = c("A", "B", "C", "D", "E")))
+print(cmtval)                                        
+```
+
+Now we will see what variables are actually used for outcome prediction.
+```{r, cache = TRUE, echo = FALSE, warning=FALSE, message=FALSE}
+varImp(modFit)
+```
+
+## Conclusion
+Using random forests learning algorithm we were able to construct a model which was able to predict validation data with 100% accuracy. The fact that variable importance varies significantly suggests that a simpler model could be built.  
+
+
+## References
+[1] Vellosso, E., Bulling, A., Gellersen, H., Ugulino, W., Fulks, H. Qualitative Activity Recognition of Weight Listing Exercises, Proceedings pf 4th Internationlal Conference in Cooperation with SIGCHI (Augmented Human '13). Stuttgart, Germany: ACM SIGCHI, 2013  
