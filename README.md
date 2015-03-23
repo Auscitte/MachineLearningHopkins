@@ -1,2 +1,2 @@
-Generated html can be viewed here
+Generated html can be found here
 http://auscitte.github.io/MachineLearningHopkins/
